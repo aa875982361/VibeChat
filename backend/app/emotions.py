@@ -5,6 +5,7 @@ import re
 from typing import Any
 
 from openai import AsyncOpenAI
+from pydantic import ValidationError
 
 from .config import settings
 from .schemas import EmotionAnalysis, PrimaryEmotion, SafetyRisk, ShareIntent
@@ -48,13 +49,20 @@ empathy_prompt 用中文，克制、温柔，不像心理咨询广告，不超�
 
 
 async def analyze_text(text: str) -> EmotionAnalysis:
-    if not settings.openai_api_key:
+    if not settings.llm_api_key:
         return fallback_analysis(text)
 
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    client_kwargs: dict[str, str] = {"api_key": settings.llm_api_key}
+    if settings.llm_base_url:
+        client_kwargs["base_url"] = settings.llm_base_url
+    client = AsyncOpenAI(**client_kwargs)
+
+    if settings.ai_provider == "deepseek":
+        return await analyze_with_chat_completions(client, text)
+
     moderation_risk = await moderate_text(client, text)
     response = await client.responses.create(
-        model=settings.openai_model,
+        model=settings.llm_model,
         input=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": text},
@@ -72,6 +80,37 @@ async def analyze_text(text: str) -> EmotionAnalysis:
     analysis = EmotionAnalysis(**payload)
     if moderation_risk != SafetyRisk.none:
         analysis.safety_risk = moderation_risk
+    return analysis
+
+
+async def analyze_with_chat_completions(client: AsyncOpenAI, text: str) -> EmotionAnalysis:
+    local_risk = fallback_safety(text)
+    json_contract = json.dumps(EMOTION_SCHEMA, ensure_ascii=False)
+    response = await client.chat.completions.create(
+        model=settings.llm_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    SYSTEM_PROMPT
+                    + "\n你必须返回一个 JSON object，不要使用 Markdown。字段必须完整，枚举值必须使用英文。"
+                    + "\n严格遵守这个 JSON Schema 的字段、类型、范围和枚举："
+                    + json_contract
+                ),
+            },
+            {"role": "user", "content": text},
+        ],
+        response_format={"type": "json_object"},
+        temperature=0.2,
+    )
+    content = response.choices[0].message.content or "{}"
+    try:
+        analysis = EmotionAnalysis(**json.loads(content))
+    except (json.JSONDecodeError, ValidationError):
+        analysis = fallback_analysis(text)
+    if local_risk != SafetyRisk.none:
+        analysis.safety_risk = local_risk
+        analysis.empathy_prompt = empathy_for(analysis.primary_emotion, local_risk)
     return analysis
 
 

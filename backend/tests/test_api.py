@@ -8,7 +8,9 @@ from app.main import app
 
 def setup_function() -> None:
     database.reset_db_for_tests("/tmp/vibechat-test.db")
+    os.environ["AI_PROVIDER"] = "openai"
     os.environ["OPENAI_API_KEY"] = ""
+    os.environ["DEEPSEEK_API_KEY"] = ""
 
 
 def test_create_session_and_analyze_joy_room() -> None:
@@ -81,4 +83,3 @@ def test_join_room_and_websocket_message_broadcast() -> None:
         event = websocket.receive_json()
         assert event["type"] == "message"
         assert event["message"]["content"] == "我也想把这份开心说出来"
-

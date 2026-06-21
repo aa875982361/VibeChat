@@ -25,9 +25,54 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Docker Compose
+
+Create `.env` first:
+
+```bash
+cp .env.example .env
+```
+
+For DeepSeek, set at least:
+
+```bash
+AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
+
+Then start both services:
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:3000. The backend is exposed at http://localhost:8058, and SQLite data is stored in the `vibechat-data` Docker volume.
+
 ## Environment
 
-Set `OPENAI_API_KEY` in `.env` or your shell to enable real AI emotion analysis. Without a key, the backend uses a local rule-based fallback so the MVP remains runnable.
+Set AI credentials in `.env` or your shell to enable real AI emotion analysis. Without a key, the backend uses a local rule-based fallback so the MVP remains runnable.
+
+DeepSeek example:
+
+```bash
+AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=sk-...
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
+
+OpenAI example:
+
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
 
 ## API
 

@@ -274,7 +274,7 @@ export default function Home() {
                 <Sparkles size={16} />
                 VibeChat
               </div>
-              <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink sm:text-3xl">把此刻的情绪放在匿名同频里</h1>
+              <h1 className="mt-1 text-2xl font-semibold tracking-normal text-ink sm:text-3xl">给不想发朋友圈的人，一个安心表达的地方</h1>
             </div>
             <div className="flex items-center gap-2 rounded-[8px] border border-moss/20 bg-mist px-3 py-2 text-sm text-ink/70">
               <Shield size={16} />

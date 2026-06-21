@@ -450,7 +450,7 @@ export default function Home() {
                   enteringRoomId={enteringRoomId}
                   onRejoin={handleRejoin}
                 />
-                <RoomListSection title="公共聊天室" rooms={publicRooms} />
+                <RoomListSection title="同频聊天室" rooms={publicRooms} />
               </>
             )}
           </div>
@@ -481,7 +481,7 @@ function RoomListSection({
       </div>
       {rooms.length === 0 ? (
         <p className="rounded-[8px] border border-dashed border-ink/14 p-4 text-sm leading-6 text-ink/55">
-          {emptyText ?? "只能通过情绪匹配进入公共聊天室。"}
+          {emptyText ?? "只能通过情绪匹配进入同频聊天室。"}
         </p>
       ) : (
         <div className="flex flex-col gap-3">
@@ -509,11 +509,7 @@ function RoomListSection({
                   {enteringRoomId === room.id ? <Loader2 className="animate-spin" size={14} /> : <LogIn size={14} />}
                   回到这个房间
                 </button>
-              ) : (
-                <div className="mt-3 rounded-[8px] bg-[#fbfaf7] px-3 py-2 text-xs leading-5 text-ink/48">
-                  通过重新匹配进入
-                </div>
-              )}
+              ) : null}
             </div>
           ))}
         </div>

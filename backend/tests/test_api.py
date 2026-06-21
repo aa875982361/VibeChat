@@ -2,7 +2,9 @@ import asyncio
 import json
 import os
 from types import SimpleNamespace
+from typing import Optional
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app import database
@@ -16,6 +18,16 @@ def setup_function() -> None:
     os.environ["OPENAI_API_KEY"] = ""
     os.environ["DEEPSEEK_API_KEY"] = ""
     os.environ["ANTHROPIC_API_KEY"] = ""
+
+
+def analyze_for_text(client: TestClient, text: str) -> dict:
+    session = client.post("/api/sessions").json()
+    response = client.post(
+        "/api/emotions/analyze",
+        json={"session_id": session["session_id"], "text": text},
+    )
+    assert response.status_code == 200
+    return response.json()
 
 
 def test_create_session_and_analyze_joy_room() -> None:
@@ -50,6 +62,155 @@ def test_sadness_maps_to_support_room() -> None:
     assert data["analysis"]["primary_emotion"] == "sadness"
     assert data["analysis"]["share_intent"] == "seek_comfort"
     assert "陪伴" in data["recommended_room"]["name"]
+
+
+@pytest.mark.parametrize(
+    (
+        "text",
+        "expected_emotion",
+        "expected_intent",
+        "expected_room_prefix",
+        "expected_room_word",
+        "expected_valence",
+        "expected_secondary",
+    ),
+    [
+        (
+            "明天要面试，紧张得睡不着，脑子一直停不下来",
+            "anxiety",
+            "vent",
+            "anxiety-",
+            "焦虑",
+            "negative",
+            None,
+        ),
+        (
+            "连续加班好几天，压力太大了，真的累到不想说话",
+            "stress",
+            "vent",
+            "stress-",
+            "压力",
+            "negative",
+            "疲惫",
+        ),
+        (
+            "一个人在外地生病，没人懂，也没人听我说话",
+            "loneliness",
+            "seek_comfort",
+            "loneliness-",
+            "孤独",
+            "negative",
+            None,
+        ),
+        (
+            "朋友帮我解决了大麻烦，真的很感谢，也觉得自己很幸运",
+            "gratitude",
+            "celebrate",
+            "gratitude-",
+            "暖光",
+            "positive",
+            None,
+        ),
+        (
+            "昨天会上说错话，觉得特别丢脸，很后悔也有点自责",
+            "shame",
+            "reflect",
+            "shame-",
+            "柔软",
+            "negative",
+            None,
+        ),
+        (
+            "我不知道该不该离职，脑子很混乱，纠结到搞不清方向",
+            "confusion",
+            "reflect",
+            "confusion-",
+            "混乱",
+            "negative",
+            None,
+        ),
+        (
+            "被同事甩锅真的很生气，觉得太不公平了",
+            "anger",
+            "vent",
+            "anger-",
+            "降温",
+            "negative",
+            "委屈",
+        ),
+    ],
+)
+def test_user_input_scenarios_map_to_reasonable_rooms(
+    text: str,
+    expected_emotion: str,
+    expected_intent: str,
+    expected_room_prefix: str,
+    expected_room_word: str,
+    expected_valence: str,
+    expected_secondary: Optional[str],
+) -> None:
+    client = TestClient(app)
+
+    data = analyze_for_text(client, text)
+    analysis = data["analysis"]
+    room = data["recommended_room"]
+
+    assert data["safe_to_join"] is True
+    assert analysis["primary_emotion"] == expected_emotion
+    assert analysis["share_intent"] == expected_intent
+    assert room["id"].startswith(expected_room_prefix)
+    assert expected_room_word in room["name"]
+    assert 1 <= analysis["intensity"] <= 5
+    assert 0 <= analysis["arousal"] <= 1
+    assert "AI" not in analysis["status_message"]
+    assert analysis["status_message"].startswith(text[: min(len(text), 18)])
+    if expected_valence == "positive":
+        assert analysis["valence"] > 0
+    else:
+        assert analysis["valence"] < 0
+    if expected_secondary:
+        assert expected_secondary in analysis["secondary_emotions"]
+
+
+def test_similar_users_match_the_same_emotion_intensity_room() -> None:
+    client = TestClient(app)
+    first = analyze_for_text(client, "今天升职了真的太开心了！！")
+    second = analyze_for_text(client, "项目终于上线了，太好了，开心到想找人分享！！")
+
+    assert first["analysis"]["primary_emotion"] == "joy"
+    assert second["analysis"]["primary_emotion"] == "joy"
+    assert first["recommended_room"]["id"] == second["recommended_room"]["id"]
+    assert first["recommended_room"]["id"] == "joy-high"
+
+
+def test_different_intensity_creates_a_separate_room_within_same_emotion() -> None:
+    client = TestClient(app)
+    calm = analyze_for_text(client, "今天挺开心")
+    intense = analyze_for_text(client, "今天升职了真的太开心了！！")
+
+    assert calm["analysis"]["primary_emotion"] == intense["analysis"]["primary_emotion"] == "joy"
+    assert calm["recommended_room"]["id"] == "joy-medium"
+    assert intense["recommended_room"]["id"] == "joy-high"
+    assert calm["recommended_room"]["id"] != intense["recommended_room"]["id"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_risk"),
+    [
+        ("我不想活了，想结束生命", "self_harm"),
+        ("我想报复他，真的想伤害别人", "violence"),
+        ("我彻底崩溃了，觉得没有希望", "severe_distress"),
+    ],
+)
+def test_high_risk_user_inputs_are_not_matched_into_public_rooms(text: str, expected_risk: str) -> None:
+    client = TestClient(app)
+
+    data = analyze_for_text(client, text)
+
+    assert data["safe_to_join"] is False
+    assert data["recommended_room"] is None
+    assert data["analysis"]["safety_risk"] == expected_risk
+    assert data["safety_message"]
 
 
 def test_risk_content_does_not_join_public_room() -> None:

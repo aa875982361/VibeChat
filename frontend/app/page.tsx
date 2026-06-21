@@ -439,12 +439,12 @@ export default function Home() {
           )}
         </section>
 
-        <aside className="w-full rounded-[8px] border border-white/70 bg-[#fbfaf7]/82 p-5 shadow-calm backdrop-blur lg:w-[320px]">
+        <aside className="flex max-h-[420px] w-full flex-col rounded-[8px] border border-white/70 bg-[#fbfaf7]/82 p-5 shadow-calm backdrop-blur lg:sticky lg:top-5 lg:max-h-[calc(100vh-40px)] lg:w-[320px] lg:self-start">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-semibold text-ink">情绪聊天室</h2>
             <Users size={18} className="text-moss" />
           </div>
-          <div className="mt-4 flex flex-col gap-5">
+          <div className="scroll-soft mt-4 flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto pr-1">
             {rooms.length === 0 ? (
               <p className="rounded-[8px] border border-dashed border-ink/14 p-4 text-sm leading-6 text-ink/55">
                 还没有房间。第一句情绪会生成第一个同频空间。

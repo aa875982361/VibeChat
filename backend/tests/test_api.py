@@ -59,6 +59,120 @@ def old_room_signature(analysis: EmotionAnalysis) -> str:
     return f"{analysis.primary_emotion.value}-{intensity_bucket(analysis.intensity)}"
 
 
+SIMULATED_USER_INPUT_CASES = [
+    # joy
+    ("今天收到好消息，心里很开心", "joy-medium-share-positive-steady-general"),
+    ("这周项目顺利结束，想找人分享一下", "joy-medium-share-positive-steady-general"),
+    ("下班路上听到喜欢的歌，觉得很快乐", "joy-medium-share-positive-steady-general"),
+    ("朋友夸我做得好，心里高兴了一整晚", "joy-medium-share-positive-steady-general"),
+    ("今天升职了真的太开心了！！", "joy-high-share-positive-steady-general"),
+    ("抽奖中奖，整个人都特别兴奋", "joy-high-share-positive-steady-general"),
+    ("家里人说为我骄傲，我觉得非常幸福", "joy-high-share-positive-steady-general"),
+    ("方案顺利通过，开心到想说出来", "joy-medium-share-positive-steady-general"),
+    ("客户认可方案，感觉好棒", "joy-medium-share-positive-steady-general"),
+    ("今天太好了，想大声笑出来", "joy-high-share-positive-steady-general"),
+    # gratitude
+    ("今天同事帮我收尾，真的很感谢他", "gratitude-medium-share-positive-calm-general"),
+    ("被朋友认真听完以后，我心里很感恩", "gratitude-low-share-positive-calm-general"),
+    ("这次被帮助让我觉得世界还挺温柔", "gratitude-low-share-positive-calm-general"),
+    ("谢谢室友给我留了热饭，心里暖了一下", "gratitude-low-share-positive-calm-general"),
+    ("最近遇到很多善意，觉得自己很幸运", "gratitude-low-share-positive-calm-general"),
+    ("导师耐心改了我的稿子，我特别感谢", "gratitude-medium-share-positive-calm-general"),
+    ("有人在我低谷时拉了我一把，真的感恩", "gratitude-medium-share-positive-calm-general"),
+    ("陌生人帮我找回证件，我想说声谢谢", "gratitude-low-share-positive-calm-general"),
+    ("家人一直支持我，我觉得很幸运也很安定", "gratitude-medium-share-positive-calm-general"),
+    ("朋友记得我的小事，我非常感谢这份在意", "gratitude-high-share-positive-calm-general"),
+    # sadness
+    ("今天突然很难过，什么都不想解释", "sadness-low-comfort-negative-steady-general"),
+    ("看到以前的照片，心里有点伤心", "sadness-low-comfort-negative-steady-general"),
+    ("我哭了一晚上，还是觉得心里空空的", "sadness-low-comfort-negative-steady-general"),
+    ("分开以后很失落，心里一直缓不过来", "sadness-low-comfort-negative-steady-general"),
+    ("这件事让我心碎，也不想让朋友担心", "sadness-low-comfort-negative-steady-fear"),
+    ("最近真的很脆弱，一句话就想哭", "sadness-medium-comfort-negative-steady-general"),
+    ("计划落空以后，我特别难过", "sadness-medium-comfort-negative-steady-general"),
+    ("回家路上突然很伤心", "sadness-low-comfort-negative-steady-general"),
+    ("努力很久还是失败，心里很失落", "sadness-low-comfort-negative-steady-general"),
+    ("今天崩溃地哭了很久，只想有人听听", "sadness-medium-comfort-negative-steady-general"),
+    # anxiety
+    ("明天要面试，紧张得睡不着", "anxiety-high-vent-negative-activated-general"),
+    ("一直担心结果不好，心跳停不下来", "anxiety-high-vent-negative-activated-fear"),
+    ("想到体检报告就害怕，脑子反复转", "anxiety-high-vent-negative-activated-fear"),
+    ("消息还没回复，我有点慌", "anxiety-high-vent-negative-activated-general"),
+    ("上台前特别紧张，手都在抖", "anxiety-high-vent-negative-activated-general"),
+    ("我怕自己做不好，越想越焦虑", "anxiety-high-vent-negative-activated-fear"),
+    ("今晚睡不着，脑子一直想明天的事", "anxiety-high-vent-negative-activated-general"),
+    ("担心被拒绝，整个人绷得很紧", "anxiety-high-vent-negative-activated-fear"),
+    ("害怕计划突然出问题，心里不踏实", "anxiety-high-vent-negative-activated-fear"),
+    ("临近汇报非常焦虑，完全放松不下来", "anxiety-high-vent-negative-activated-general"),
+    # anger
+    ("被同事甩锅真的很生气", "anger-high-vent-negative-activated-general"),
+    ("这件事太不公平了，我心里堵得慌", "anger-high-vent-negative-activated-grievance"),
+    ("明明不是我的错，却被骂了一顿，很委屈", "anger-high-vent-negative-activated-grievance"),
+    ("对方说话很冲，我有点愤怒", "anger-high-vent-negative-activated-general"),
+    ("被临时改需求，气死我了", "anger-high-vent-negative-activated-general"),
+    ("努力被否定，我真的很生气也很不甘心", "anger-high-vent-negative-activated-general"),
+    ("排队被插队，感觉特别生气", "anger-high-vent-negative-activated-general"),
+    ("朋友爽约还怪我，我觉得不公平", "anger-high-vent-negative-activated-grievance"),
+    ("被误解以后很委屈，也有点生气", "anger-high-vent-negative-activated-grievance"),
+    ("领导当众批评我，我心里很生气", "anger-high-vent-negative-activated-general"),
+    # loneliness
+    ("一个人在外地生病，没人听我说话", "loneliness-low-comfort-negative-calm-general"),
+    ("周末醒来特别孤独，房间安静得难受", "loneliness-medium-comfort-negative-calm-general"),
+    ("热闹结束以后，我突然觉得很寂寞", "loneliness-low-comfort-negative-calm-general"),
+    ("身边很多人，但没人懂我在想什么", "loneliness-low-comfort-negative-calm-general"),
+    ("晚上回到房间，只剩自己一个人", "loneliness-low-comfort-negative-calm-general"),
+    ("想说话却没人听，心里很空", "loneliness-low-comfort-negative-calm-general"),
+    ("朋友圈很热闹，我却觉得没人懂", "loneliness-low-comfort-negative-calm-general"),
+    ("搬到新城市后一直很孤独", "loneliness-low-comfort-negative-calm-general"),
+    ("今天吃饭一个人，突然有点寂寞", "loneliness-low-comfort-negative-calm-general"),
+    ("很多话憋着没人听，感觉很孤单", "loneliness-low-comfort-negative-calm-general"),
+    # stress
+    ("连续加班好几天，压力太大了", "stress-high-vent-negative-activated-fatigue"),
+    ("工作堆在一起，我快累垮了", "stress-medium-vent-negative-activated-fatigue"),
+    ("考试临近，压力压得我喘不过气", "stress-medium-vent-negative-activated-fatigue"),
+    ("项目 deadline 快到了，整个人很累", "stress-medium-vent-negative-activated-fatigue"),
+    ("家里和工作都要顾，感觉撑不住", "stress-high-vent-negative-activated-general"),
+    ("最近任务太多，真的压力很大", "stress-high-vent-negative-activated-fatigue"),
+    ("开会开到很晚，累得不想说话", "stress-medium-vent-negative-activated-fatigue"),
+    ("工作反复返工，我有点撑不住", "stress-high-vent-negative-activated-general"),
+    ("考试复习不完，心里压力爆棚", "stress-medium-vent-negative-activated-fatigue"),
+    ("每天都在赶进度，身体和脑子都很累", "stress-medium-vent-negative-activated-fatigue"),
+    # shame
+    ("昨天会上说错话，觉得特别丢脸", "shame-medium-reflect-negative-steady-general"),
+    ("想起那件事还是很羞耻", "shame-low-reflect-negative-steady-general"),
+    ("发错消息以后，我尴尬到不敢看手机", "shame-low-reflect-negative-steady-general"),
+    ("明明答应了却没做到，我很后悔", "shame-low-reflect-negative-steady-general"),
+    ("对朋友发火之后，我一直很自责", "shame-low-reflect-negative-steady-general"),
+    ("今天表现很糟糕，觉得有点丢脸", "shame-low-reflect-negative-steady-general"),
+    ("被指出错误时，我真的很尴尬", "shame-medium-reflect-negative-steady-general"),
+    ("做错决定以后，心里很后悔", "shame-low-reflect-negative-steady-general"),
+    ("想到自己的反应，觉得特别自责", "shame-medium-reflect-negative-steady-general"),
+    ("那句话说出口后，我有点羞耻", "shame-low-reflect-negative-steady-general"),
+    # confusion
+    ("我不知道该不该离职，脑子很混乱", "confusion-low-reflect-negative-steady-general"),
+    ("最近很迷茫，不知道下一步怎么走", "confusion-low-reflect-negative-steady-general"),
+    ("两个选择都不确定，我很纠结", "confusion-low-reflect-negative-steady-general"),
+    ("事情太多了，我有点搞不清重点", "confusion-medium-reflect-negative-steady-general"),
+    ("心里乱乱的，不知道自己想要什么", "confusion-low-reflect-negative-steady-general"),
+    ("计划变来变去，我现在很混乱", "confusion-low-reflect-negative-steady-general"),
+    ("未来方向很迷茫，越想越乱", "confusion-low-reflect-negative-steady-general"),
+    ("我不知道要不要继续这段关系", "confusion-low-reflect-negative-steady-general"),
+    ("好多想法打架，纠结到睡不着", "confusion-low-reflect-negative-steady-general"),
+    ("今天只是搞不清自己的情绪", "confusion-low-reflect-negative-steady-general"),
+    # neutral
+    ("今天没什么特别的事，只想安静待会", "neutral-medium-reflect-mixed-calm-general"),
+    ("刚下班，想找个地方随便说两句", "neutral-low-reflect-mixed-calm-general"),
+    ("午后有点空，想听听别人聊天", "neutral-low-reflect-mixed-calm-general"),
+    ("今天状态还算平稳，想慢慢待一会", "neutral-low-reflect-mixed-calm-general"),
+    ("现在没有强烈情绪，只是想说说日常", "neutral-low-reflect-mixed-calm-general"),
+    ("我在等车，顺手记录一下此刻", "neutral-low-reflect-mixed-calm-general"),
+    ("喝完水以后，想安静地坐一会", "neutral-low-reflect-mixed-calm-general"),
+    ("今天比较平常，没有特别起伏", "neutral-medium-reflect-mixed-calm-general"),
+    ("只是路过这里，想看看大家在聊什么", "neutral-low-reflect-mixed-calm-general"),
+    ("此刻很安静，想轻轻说句话", "neutral-low-reflect-mixed-calm-general"),
+]
+
+
 def test_create_session_and_analyze_joy_room() -> None:
     client = TestClient(app)
     session = client.post("/api/sessions").json()
@@ -201,27 +315,28 @@ def test_user_input_scenarios_map_to_reasonable_rooms(
         assert expected_secondary in analysis["secondary_emotions"]
 
 
-@pytest.mark.parametrize(
-    ("text", "expected_room_id"),
-    [
-        ("明天要面试，紧张得睡不着，脑子一直停不下来", "anxiety-high-vent-negative-activated-general"),
-        ("连续加班好几天，压力太大了，真的累到不想说话", "stress-high-vent-negative-activated-fatigue"),
-        ("一个人在外地生病，没人懂，也没人听我说话", "loneliness-medium-comfort-negative-calm-general"),
-        ("朋友帮我解决了大麻烦，真的很感谢，也觉得自己很幸运", "gratitude-high-share-positive-calm-general"),
-        ("昨天会上说错话，觉得特别丢脸，很后悔也有点自责", "shame-high-reflect-negative-steady-general"),
-        ("我不知道该不该离职，脑子很混乱，纠结到搞不清方向", "confusion-medium-reflect-negative-steady-general"),
-        ("被同事甩锅真的很生气，觉得太不公平了", "anger-high-vent-negative-activated-grievance"),
-        ("今天升职了真的太开心了！！", "joy-high-share-positive-steady-general"),
-        ("项目终于上线了，太好了，开心到想找人分享！！", "joy-high-share-positive-steady-general"),
-        ("今天挺开心", "joy-medium-share-positive-steady-general"),
-    ],
-)
-def test_simulated_user_input_matching_accuracy(text: str, expected_room_id: str) -> None:
+def test_simulated_user_input_matching_accuracy() -> None:
     client = TestClient(app)
+    mismatches = []
 
-    data = analyze_for_text(client, text)
+    for index, (text, expected_room_id) in enumerate(SIMULATED_USER_INPUT_CASES, start=1):
+        data = analyze_for_text(client, text)
+        actual_room_id = data["recommended_room"]["id"]
+        if actual_room_id != expected_room_id:
+            mismatches.append(
+                {
+                    "index": index,
+                    "text": text,
+                    "expected": expected_room_id,
+                    "actual": actual_room_id,
+                }
+            )
 
-    assert data["recommended_room"]["id"] == expected_room_id
+    correct = len(SIMULATED_USER_INPUT_CASES) - len(mismatches)
+    accuracy = correct / len(SIMULATED_USER_INPUT_CASES)
+
+    assert len(SIMULATED_USER_INPUT_CASES) == 100
+    assert accuracy == pytest.approx(1.0), mismatches
 
 
 def test_matching_signature_uses_intent_valence_arousal_and_secondary_emotions() -> None:

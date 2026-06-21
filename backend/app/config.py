@@ -19,19 +19,37 @@ class Settings:
     def llm_api_key(self) -> str:
         if self.ai_provider == "deepseek":
             return os.getenv("DEEPSEEK_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
+        if self.ai_provider == "anthropic":
+            return os.getenv("ANTHROPIC_API_KEY", "")
         return os.getenv("OPENAI_API_KEY", "")
 
     @property
     def llm_base_url(self) -> str:
         if self.ai_provider == "deepseek":
             return os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+        if self.ai_provider == "anthropic":
+            return os.getenv("ANTHROPIC_BASE_URL", "")
         return os.getenv("OPENAI_BASE_URL", "")
 
     @property
     def llm_model(self) -> str:
         if self.ai_provider == "deepseek":
             return os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+        if self.ai_provider == "anthropic":
+            return os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
         return os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+
+    @property
+    def anthropic_api_key(self) -> str:
+        return os.getenv("ANTHROPIC_API_KEY", "")
+
+    @property
+    def anthropic_model(self) -> str:
+        return os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+
+    @property
+    def anthropic_base_url(self) -> str:
+        return os.getenv("ANTHROPIC_BASE_URL", "")
 
     @property
     def openai_api_key(self) -> str:

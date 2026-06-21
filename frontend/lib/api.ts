@@ -25,6 +25,7 @@ export type EmotionAnalysis = {
   summary_label: string;
   safety_risk: "none" | "self_harm" | "violence" | "severe_distress";
   empathy_prompt: string;
+  status_message: string;
 };
 
 export type Room = {
@@ -34,6 +35,8 @@ export type Room = {
   name: string;
   description: string;
   online_count: number;
+  participant_count: number;
+  joined_by_me: boolean;
 };
 
 export type AnalyzeResponse = {
@@ -95,6 +98,14 @@ export function joinRoom(sessionId: string, analysisId: string) {
   });
 }
 
-export function listRooms() {
-  return request<Room[]>("/api/rooms");
+export function rejoinRoom(sessionId: string, roomId: string) {
+  return request<JoinRoomResponse>("/api/rooms/rejoin", {
+    method: "POST",
+    body: JSON.stringify({ session_id: sessionId, room_id: roomId })
+  });
+}
+
+export function listRooms(sessionId?: string) {
+  const query = sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : "";
+  return request<Room[]>(`/api/rooms${query}`);
 }

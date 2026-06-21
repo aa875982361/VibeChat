@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 from pydantic import ValidationError
 
@@ -24,6 +25,7 @@ EMOTION_SCHEMA: dict[str, Any] = {
         "summary_label",
         "safety_risk",
         "empathy_prompt",
+        "status_message",
     ],
     "properties": {
         "primary_emotion": {"type": "string", "enum": [item.value for item in PrimaryEmotion]},
@@ -35,6 +37,7 @@ EMOTION_SCHEMA: dict[str, Any] = {
         "summary_label": {"type": "string", "minLength": 1, "maxLength": 24},
         "safety_risk": {"type": "string", "enum": [item.value for item in SafetyRisk]},
         "empathy_prompt": {"type": "string", "minLength": 1, "maxLength": 160},
+        "status_message": {"type": "string", "minLength": 1, "maxLength": 180},
     },
 }
 
@@ -45,12 +48,18 @@ SYSTEM_PROMPT = """
 判断 primary_emotion、复合 secondary_emotions、强度、正负倾向、唤醒度和分享意图。
 如果文本表达自伤、自杀、伤害他人或极端失控风险，设置 safety_risk。
 empathy_prompt 用中文，克制、温柔，不像心理咨询广告，不超过 60 个汉字。
+status_message 是用户进房后可选择发送的第一人称状态描述，40-120 个中文字符。
+status_message 要像用户自己说的话，不要出现“AI”“识别”“强度”“标签”“诊断”等分析口吻。
+status_message 只能基于用户原文和情绪理解，不要编造用户没有说过的具体事实。
 """
 
 
 async def analyze_text(text: str) -> EmotionAnalysis:
     if not settings.llm_api_key:
         return fallback_analysis(text)
+
+    if settings.ai_provider == "anthropic":
+        return await analyze_with_anthropic(text)
 
     client_kwargs: dict[str, str] = {"api_key": settings.llm_api_key}
     if settings.llm_base_url:
@@ -80,6 +89,8 @@ async def analyze_text(text: str) -> EmotionAnalysis:
     analysis = EmotionAnalysis(**payload)
     if moderation_risk != SafetyRisk.none:
         analysis.safety_risk = moderation_risk
+        analysis.empathy_prompt = empathy_for(analysis.primary_emotion, moderation_risk)
+        analysis.status_message = status_message_for(text, analysis.primary_emotion, analysis.share_intent, moderation_risk)
     return analysis
 
 
@@ -104,14 +115,63 @@ async def analyze_with_chat_completions(client: AsyncOpenAI, text: str) -> Emoti
         temperature=0.2,
     )
     content = response.choices[0].message.content or "{}"
-    try:
-        analysis = EmotionAnalysis(**json.loads(content))
-    except (json.JSONDecodeError, ValidationError):
-        analysis = fallback_analysis(text)
+    analysis = parse_analysis_or_fallback(content, text)
     if local_risk != SafetyRisk.none:
         analysis.safety_risk = local_risk
         analysis.empathy_prompt = empathy_for(analysis.primary_emotion, local_risk)
+        analysis.status_message = status_message_for(text, analysis.primary_emotion, analysis.share_intent, local_risk)
     return analysis
+
+
+async def analyze_with_anthropic(text: str) -> EmotionAnalysis:
+    local_risk = fallback_safety(text)
+    client_kwargs: dict[str, str] = {"api_key": settings.anthropic_api_key}
+    if settings.anthropic_base_url:
+        client_kwargs["base_url"] = settings.anthropic_base_url
+    client = AsyncAnthropic(**client_kwargs)
+    json_contract = json.dumps(EMOTION_SCHEMA, ensure_ascii=False)
+    response = await client.messages.create(
+        model=settings.anthropic_model,
+        max_tokens=900,
+        temperature=0.2,
+        system=(
+            SYSTEM_PROMPT
+            + "\n你必须只返回一个 JSON object，不要使用 Markdown，不要添加解释。"
+            + "\n字段必须完整，枚举值必须使用英文。严格遵守这个 JSON Schema："
+            + json_contract
+        ),
+        messages=[{"role": "user", "content": text}],
+    )
+    content = "\n".join(
+        block.text for block in response.content if getattr(block, "type", "") == "text" and getattr(block, "text", "")
+    )
+    analysis = parse_analysis_or_fallback(content, text)
+    if local_risk != SafetyRisk.none:
+        analysis.safety_risk = local_risk
+        analysis.empathy_prompt = empathy_for(analysis.primary_emotion, local_risk)
+        analysis.status_message = status_message_for(text, analysis.primary_emotion, analysis.share_intent, local_risk)
+    return analysis
+
+
+def parse_analysis_or_fallback(content: str, text: str) -> EmotionAnalysis:
+    try:
+        return EmotionAnalysis(**json.loads(extract_json_object(content)))
+    except (json.JSONDecodeError, ValidationError, ValueError):
+        return fallback_analysis(text)
+
+
+def extract_json_object(content: str) -> str:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+    start = stripped.find("{")
+    end = stripped.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        raise ValueError("No JSON object found")
+    return stripped[start : end + 1]
 
 
 async def moderate_text(client: AsyncOpenAI, text: str) -> SafetyRisk:
@@ -209,6 +269,7 @@ def fallback_analysis(text: str) -> EmotionAnalysis:
         summary_label=label,
         safety_risk=risk,
         empathy_prompt=empathy_for(emotion, risk),
+        status_message=status_message_for(text, emotion, intent, risk),
     )
 
 
@@ -264,6 +325,36 @@ def infer_secondaries(text: str, primary: PrimaryEmotion) -> list[str]:
         PrimaryEmotion.neutral: "平静",
     }[primary]
     return [item for item in found if item != primary_cn][:4]
+
+
+def status_message_for(text: str, emotion: PrimaryEmotion, intent: ShareIntent, risk: SafetyRisk) -> str:
+    if risk != SafetyRisk.none:
+        return "我现在的状态有点危险，可能不适合先进入普通聊天室。我需要先找一个真实的人或紧急支持陪我一下。"
+
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if len(cleaned) > 86:
+        cleaned = cleaned[:86].rstrip("，。,.、 ") + "..."
+    if cleaned and cleaned[-1] not in "。！？!?":
+        cleaned += "。"
+
+    endings = {
+        PrimaryEmotion.joy: "这件事其实让我挺开心的，也想找个地方自然地分享一下。",
+        PrimaryEmotion.gratitude: "这份被照顾到的感觉让我很想好好记住，也想和人轻轻聊聊。",
+        PrimaryEmotion.sadness: "我现在有点低落，想先找个地方把这些难过慢慢说出来。",
+        PrimaryEmotion.anxiety: "我现在心里有点紧，想先在这里把这口气缓一缓。",
+        PrimaryEmotion.anger: "我心里有点堵，也有点不甘心，想先把这股劲说出来。",
+        PrimaryEmotion.loneliness: "这种没人太懂的感觉有点重，我想先在这里被听见一下。",
+        PrimaryEmotion.stress: "现在压力有点顶着，也有点累，想先找个地方喘口气。",
+        PrimaryEmotion.shame: "这件事让我有点难开口，但我还是想找个地方慢慢整理一下。",
+        PrimaryEmotion.confusion: "我现在还没太理清楚，只是想先把这团乱说出来一点。",
+        PrimaryEmotion.neutral: "我现在没有特别强烈的情绪，只是想找个安静的地方说说话。",
+    }
+
+    if intent == ShareIntent.listen:
+        endings[emotion] = "我现在更想先听听别人怎么说，也让自己慢慢靠近一点。"
+
+    message = f"{cleaned}{endings[emotion]}"
+    return message[:180]
 
 
 def empathy_for(emotion: PrimaryEmotion, risk: SafetyRisk) -> str:

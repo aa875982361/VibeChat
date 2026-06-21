@@ -4,6 +4,7 @@ import {
   Check,
   HeartHandshake,
   Loader2,
+  LogIn,
   MessageCircle,
   RefreshCcw,
   Send,
@@ -21,7 +22,8 @@ import {
   analyzeEmotion,
   createSession,
   joinRoom,
-  listRooms
+  listRooms,
+  rejoinRoom
 } from "../lib/api";
 
 const emotionNames: Record<string, string> = {
@@ -39,6 +41,12 @@ const emotionNames: Record<string, string> = {
 
 const samples = ["今天升职了但不敢发朋友圈", "我很难过但不想朋友担心", "压力好大，想找个地方说说"];
 
+function formatMessageTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+}
+
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [text, setText] = useState("");
@@ -48,10 +56,12 @@ export default function Home() {
   const [draft, setDraft] = useState("");
   const [rooms, setRooms] = useState<Room[]>([]);
   const [loading, setLoading] = useState<"session" | "analysis" | "join" | null>("session");
+  const [enteringRoomId, setEnteringRoomId] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [presence, setPresence] = useState("");
   const [socketReady, setSocketReady] = useState(false);
   const [statusShareChoice, setStatusShareChoice] = useState<"pending" | "sent" | "dismissed">("pending");
+  const [statusDraft, setStatusDraft] = useState("");
   const socketRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -82,14 +92,31 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    listRooms().then(setRooms).catch(() => undefined);
-  }, [analysis, chat]);
+    if (!session) return;
+    let cancelled = false;
+    listRooms(session.session_id)
+      .then((nextRooms) => {
+        if (!cancelled) setRooms(nextRooms);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [analysis?.analysis_id, chat?.room.id, session?.session_id]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, presence]);
 
+  useEffect(() => {
+    if (analysis?.analysis.status_message) {
+      setStatusDraft(analysis.analysis.status_message);
+    }
+  }, [analysis]);
+
   const canAnalyze = useMemo(() => text.trim().length >= 2 && !loading && session, [text, loading, session]);
+  const myRooms = useMemo(() => rooms.filter((room) => room.joined_by_me), [rooms]);
+  const publicRooms = useMemo(() => rooms.filter((room) => !room.joined_by_me), [rooms]);
 
   async function handleAnalyze(event: FormEvent) {
     event.preventDefault();
@@ -114,6 +141,7 @@ export default function Home() {
     if (!session || !analysis) return;
     setError("");
     setLoading("join");
+    setEnteringRoomId(null);
     try {
       const joined = await joinRoom(session.session_id, analysis.analysis_id);
       setChat(joined);
@@ -127,6 +155,29 @@ export default function Home() {
     }
   }
 
+  async function handleRejoin(roomId: string) {
+    if (!session) return;
+    setError("");
+    setLoading("join");
+    setEnteringRoomId(roomId);
+    closeSocket();
+    try {
+      const joined = await rejoinRoom(session.session_id, roomId);
+      setAnalysis(null);
+      setChat(joined);
+      setMessages(joined.messages);
+      setPresence("");
+      setStatusShareChoice("dismissed");
+      setStatusDraft("");
+      connectSocket(joined.ws_url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "进入房间失败。");
+    } finally {
+      setLoading(null);
+      setEnteringRoomId(null);
+    }
+  }
+
   function connectSocket(url: string) {
     closeSocket();
     const socket = new WebSocket(url);
@@ -135,7 +186,13 @@ export default function Home() {
     socket.onmessage = (event) => {
       const payload = JSON.parse(event.data) as
         | { type: "message"; message: Message }
-        | { type: "presence"; event: "join" | "leave"; display_name: string; online_count: number }
+        | {
+            type: "presence";
+            event: "join" | "leave";
+            display_name: string;
+            online_count: number;
+            participant_count: number;
+          }
         | { type: "error"; message: string };
       if (payload.type === "message") {
         setMessages((current) => [...current, payload.message]);
@@ -147,7 +204,11 @@ export default function Home() {
           current
             ? {
                 ...current,
-                room: { ...current.room, online_count: payload.online_count }
+                room: {
+                  ...current.room,
+                  online_count: payload.online_count,
+                  participant_count: payload.participant_count
+                }
               }
             : current
         );
@@ -177,8 +238,9 @@ export default function Home() {
   }
 
   function sendCurrentStatus() {
-    if (!analysis || socketRef.current?.readyState !== WebSocket.OPEN) return;
-    socketRef.current.send(JSON.stringify({ content: buildStatusMessage(text, analysis.analysis) }));
+    const content = statusDraft.trim();
+    if (!content || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    socketRef.current.send(JSON.stringify({ content }));
     setStatusShareChoice("sent");
   }
 
@@ -190,6 +252,7 @@ export default function Home() {
     setPresence("");
     setError("");
     setStatusShareChoice("pending");
+    setStatusDraft("");
     closeSocket();
   }
 
@@ -276,7 +339,15 @@ export default function Home() {
                 <div className="flex items-center gap-3">
                   <span className="inline-flex items-center gap-2 rounded-[8px] bg-mist px-3 py-2 text-sm text-ink/65">
                     <Users size={16} />
-                    {chat.room.online_count} 在线
+                    {chat.room.online_count} 在线 · {chat.room.participant_count} 人来过
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm ${
+                      socketReady ? "bg-moss/12 text-moss" : "bg-clay/10 text-clay"
+                    }`}
+                  >
+                    <span className={`h-2 w-2 rounded-full ${socketReady ? "bg-moss" : "bg-clay"}`} />
+                    {socketReady ? "已连接" : "连接中"}
                   </span>
                   <button
                     type="button"
@@ -294,8 +365,9 @@ export default function Home() {
                   {presence ? <div className="self-center rounded-[8px] bg-mist px-3 py-1.5 text-xs text-ink/55">{presence}</div> : null}
                   {analysis && statusShareChoice === "pending" ? (
                     <CurrentStatusPanel
-                      message={buildStatusMessage(text, analysis.analysis)}
-                      disabled={!socketReady}
+                      value={statusDraft}
+                      disabled={!socketReady || !statusDraft.trim()}
+                      onChange={setStatusDraft}
                       onSend={sendCurrentStatus}
                       onDismiss={() => setStatusShareChoice("dismissed")}
                     />
@@ -305,11 +377,14 @@ export default function Home() {
                   ) : null}
                   {messages.length === 0 ? (
                     <div className="rounded-[8px] border border-dashed border-ink/16 bg-white/60 p-5 text-center text-sm text-ink/55">
-                      房间已经准备好。你可以先说一句，也可以安静地等别人开口。
+                      {chat.room.online_count <= 1
+                        ? "暂时还没有同频用户在线。房间已经为你保留，可以先留下一句当前状态，也可以安静地等下一个相近情绪的人进来。"
+                        : "房间已经准备好。你可以先说一句，也可以安静地等别人开口。"}
                     </div>
                   ) : null}
                   {messages.map((message) => {
                     const mine = message.session_id === session?.session_id;
+                    const time = formatMessageTime(message.created_at);
                     return (
                       <article key={message.id} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                         <div
@@ -317,7 +392,14 @@ export default function Home() {
                             mine ? "bg-ink text-white" : "border border-ink/10 bg-white text-ink"
                           }`}
                         >
-                          <div className={`mb-1 text-xs ${mine ? "text-white/65" : "text-ink/45"}`}>{message.display_name}</div>
+                          <div
+                            className={`mb-1 flex items-center justify-between gap-4 text-xs ${
+                              mine ? "text-white/65" : "text-ink/45"
+                            }`}
+                          >
+                            <span>{message.display_name}</span>
+                            {time ? <span>{time}</span> : null}
+                          </div>
                           <p className="whitespace-pre-wrap break-words">{message.content}</p>
                         </div>
                       </article>
@@ -351,29 +433,25 @@ export default function Home() {
 
         <aside className="w-full rounded-[8px] border border-white/70 bg-[#fbfaf7]/82 p-5 shadow-calm backdrop-blur lg:w-[320px]">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-semibold text-ink">正在形成的情绪房间</h2>
+            <h2 className="text-base font-semibold text-ink">情绪聊天室</h2>
             <Users size={18} className="text-moss" />
           </div>
-          <div className="mt-4 flex flex-col gap-3">
+          <div className="mt-4 flex flex-col gap-5">
             {rooms.length === 0 ? (
               <p className="rounded-[8px] border border-dashed border-ink/14 p-4 text-sm leading-6 text-ink/55">
                 还没有房间。第一句情绪会生成第一个同频空间。
               </p>
             ) : (
-              rooms.map((room) => (
-                <div key={room.id} className="rounded-[8px] border border-ink/10 bg-white p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-medium text-ink">{room.name}</div>
-                      <div className="mt-1 text-xs text-ink/50">
-                        {emotionNames[room.primary_emotion]} · {room.intensity_bucket}
-                      </div>
-                    </div>
-                    <span className="rounded-[8px] bg-mist px-2 py-1 text-xs text-ink/55">{room.online_count}</span>
-                  </div>
-                  <p className="mt-2 text-xs leading-5 text-ink/52">{room.description}</p>
-                </div>
-              ))
+              <>
+                <RoomListSection
+                  title="我的聊天室"
+                  emptyText="匹配进入后，房间会留在这里。"
+                  rooms={myRooms}
+                  enteringRoomId={enteringRoomId}
+                  onRejoin={handleRejoin}
+                />
+                <RoomListSection title="公共聊天室" rooms={publicRooms} />
+              </>
             )}
           </div>
         </aside>
@@ -382,14 +460,78 @@ export default function Home() {
   );
 }
 
+function RoomListSection({
+  title,
+  emptyText,
+  rooms,
+  enteringRoomId,
+  onRejoin
+}: {
+  title: string;
+  emptyText?: string;
+  rooms: Room[];
+  enteringRoomId?: string | null;
+  onRejoin?: (roomId: string) => void;
+}) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <h3 className="text-sm font-medium text-ink/68">{title}</h3>
+        <span className="text-xs text-ink/42">{rooms.length}</span>
+      </div>
+      {rooms.length === 0 ? (
+        <p className="rounded-[8px] border border-dashed border-ink/14 p-4 text-sm leading-6 text-ink/55">
+          {emptyText ?? "只能通过情绪匹配进入公共聊天室。"}
+        </p>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {rooms.map((room) => (
+            <div key={room.id} className="rounded-[8px] border border-ink/10 bg-white p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-ink">{room.name}</div>
+                  <div className="mt-1 text-xs text-ink/50">
+                    {emotionNames[room.primary_emotion]} · {room.intensity_bucket}
+                  </div>
+                </div>
+                <span className="shrink-0 rounded-[8px] bg-mist px-2 py-1 text-xs text-ink/55">
+                  {room.participant_count}
+                </span>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-ink/52">{room.description}</p>
+              {onRejoin ? (
+                <button
+                  type="button"
+                  onClick={() => onRejoin(room.id)}
+                  disabled={enteringRoomId === room.id}
+                  className="mt-3 inline-flex min-h-9 w-full items-center justify-center gap-2 rounded-[8px] border border-tide/20 bg-mist px-3 py-2 text-xs font-medium text-tide transition hover:border-tide/45 hover:bg-white disabled:cursor-not-allowed disabled:text-tide/45"
+                >
+                  {enteringRoomId === room.id ? <Loader2 className="animate-spin" size={14} /> : <LogIn size={14} />}
+                  回到这个房间
+                </button>
+              ) : (
+                <div className="mt-3 rounded-[8px] bg-[#fbfaf7] px-3 py-2 text-xs leading-5 text-ink/48">
+                  通过重新匹配进入
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function CurrentStatusPanel({
-  message,
+  value,
   disabled,
+  onChange,
   onSend,
   onDismiss
 }: {
-  message: string;
+  value: string;
   disabled: boolean;
+  onChange: (value: string) => void;
   onSend: () => void;
   onDismiss: () => void;
 }) {
@@ -397,11 +539,14 @@ function CurrentStatusPanel({
     <div className="rounded-[8px] border border-tide/18 bg-mist p-4">
       <div className="flex items-center gap-2 text-sm font-medium text-tide">
         <Sparkles size={16} />
-        当前状态
+        用这句话开场
       </div>
-      <p className="mt-3 whitespace-pre-wrap break-words rounded-[8px] border border-white bg-white/72 p-3 text-sm leading-6 text-ink/68">
-        {message}
-      </p>
+      <textarea
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="mt-3 min-h-[104px] w-full resize-none rounded-[8px] border border-white bg-white/72 p-3 text-sm leading-6 text-ink outline-none transition focus:border-tide focus:ring-4 focus:ring-tide/10"
+        maxLength={180}
+      />
       <div className="mt-3 flex flex-wrap gap-2">
         <button
           type="button"
@@ -532,11 +677,4 @@ function intentName(intent: string) {
       reflect: "想整理"
     }[intent] ?? "想表达"
   );
-}
-
-function buildStatusMessage(text: string, analysis: AnalyzeResponse["analysis"]) {
-  const original = text.trim().replace(/\s+/g, " ");
-  const excerpt = original.length > 110 ? `${original.slice(0, 110)}...` : original;
-  const secondary = analysis.secondary_emotions.length ? `，还夹着${analysis.secondary_emotions.join("、")}` : "";
-  return `我现在的状态：${analysis.summary_label}。AI 识别为${emotionNames[analysis.primary_emotion]}${secondary}，强度 ${analysis.intensity}/5，${intentName(analysis.share_intent)}。我想说的是：“${excerpt}”`;
 }

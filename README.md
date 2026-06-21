@@ -2,6 +2,8 @@
 
 AI-driven anonymous emotion rooms built with FastAPI, SQLite, and Next.js.
 
+Users describe their current mood, the backend asks an LLM to analyze the emotion, and VibeChat matches them into anonymous rooms with similar emotional state.
+
 ## Quick Start
 
 Backend:
@@ -33,7 +35,28 @@ Create `.env` first:
 cp .env.example .env
 ```
 
-For DeepSeek, set at least:
+Set one LLM provider before starting. OpenAI and Anthropic are both supported; DeepSeek is available as an OpenAI-compatible option.
+
+OpenAI:
+
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_MODERATION_MODEL=omni-moderation-latest
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
+
+Anthropic:
+
+```bash
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-6
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
+
+DeepSeek:
 
 ```bash
 AI_PROVIDER=deepseek
@@ -65,9 +88,30 @@ PIP_INDEX_URL=https://pypi.org/simple NPM_CONFIG_REGISTRY=https://registry.npmjs
 
 Open http://localhost:3000. The backend is exposed at http://localhost:8058, and SQLite data is stored in the `vibechat-data` Docker volume.
 
-## Environment
+## LLM Provider Configuration
 
 Set AI credentials in `.env` or your shell to enable real AI emotion analysis. Without a key, the backend uses a local rule-based fallback so the MVP remains runnable.
+
+OpenAI standard API:
+
+```bash
+AI_PROVIDER=openai
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4.1-mini
+OPENAI_BASE_URL=
+OPENAI_MODERATION_MODEL=omni-moderation-latest
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
+
+Anthropic standard API:
+
+```bash
+AI_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+ANTHROPIC_MODEL=claude-sonnet-4-6
+ANTHROPIC_BASE_URL=
+NEXT_PUBLIC_API_URL=http://localhost:8058
+```
 
 DeepSeek example:
 
@@ -79,13 +123,17 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 NEXT_PUBLIC_API_URL=http://localhost:8058
 ```
 
-OpenAI example:
+Provider notes:
+
+- `AI_PROVIDER=openai` uses the OpenAI Responses API plus OpenAI moderation.
+- `AI_PROVIDER=anthropic` uses the Anthropic Messages API and local safety keyword fallback.
+- `AI_PROVIDER=deepseek` uses the OpenAI-compatible Chat Completions API.
+- `OPENAI_BASE_URL`, `ANTHROPIC_BASE_URL`, and `DEEPSEEK_BASE_URL` are optional gateway/proxy overrides.
+
+Start locally after configuring `.env`:
 
 ```bash
-AI_PROVIDER=openai
-OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4.1-mini
-NEXT_PUBLIC_API_URL=http://localhost:8058
+npm run dev
 ```
 
 ## API

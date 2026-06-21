@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
@@ -16,6 +17,7 @@ from .schemas import (
     JoinRoomRequest,
     JoinRoomResponse,
     MessageOut,
+    RejoinRoomRequest,
     ReportRequest,
     ReportResponse,
     RoomOut,
@@ -61,6 +63,9 @@ async def analyze_emotion(payload: AnalyzeRequest) -> AnalyzeResponse:
     room = None
     if analysis.safety_risk == SafetyRisk.none:
         room = database.ensure_room(room_for_analysis(analysis))
+        room = database.get_room(room.id, payload.session_id)
+        if not room:
+            raise HTTPException(status_code=404, detail="Room not found")
         room.online_count = manager.online_count(room.id)
 
     analysis_id = database.save_analysis(payload.session_id, payload.text, analysis, room.id if room else None)
@@ -92,9 +97,32 @@ def join_room(payload: JoinRoomRequest, request: Request) -> JoinRoomResponse:
     if not room:
         raise HTTPException(status_code=404, detail="Room not found")
 
+    database.add_room_membership(payload.session_id, room.id)
+    room = database.get_room(room.id, payload.session_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    return room_response(room, payload.session_id, request)
+
+
+@app.post("/api/rooms/rejoin", response_model=JoinRoomResponse)
+def rejoin_room(payload: RejoinRoomRequest, request: Request) -> JoinRoomResponse:
+    session = database.get_session(payload.session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Anonymous session not found")
+    if not database.is_room_member(payload.session_id, payload.room_id):
+        raise HTTPException(status_code=403, detail="Public rooms can only be entered through matching")
+    room = database.get_room(payload.room_id, payload.session_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Room not found")
+
+    return room_response(room, payload.session_id, request)
+
+
+def room_response(room: RoomOut, session_id: str, request: Request) -> JoinRoomResponse:
     room.online_count = manager.online_count(room.id)
     scheme = "wss" if request.url.scheme == "https" else "ws"
-    ws_url = f"{scheme}://{request.url.netloc}/ws/rooms/{room.id}?session_id={payload.session_id}"
+    ws_url = f"{scheme}://{request.url.netloc}/ws/rooms/{room.id}?session_id={session_id}"
     return JoinRoomResponse(
         room=room,
         messages=[MessageOut(**message) for message in database.list_messages(room.id)],
@@ -103,8 +131,10 @@ def join_room(payload: JoinRoomRequest, request: Request) -> JoinRoomResponse:
 
 
 @app.get("/api/rooms", response_model=list[RoomOut])
-def list_rooms() -> list[RoomOut]:
-    rooms = database.list_rooms()
+def list_rooms(session_id: Optional[str] = None) -> list[RoomOut]:
+    if session_id and not database.get_session(session_id):
+        raise HTTPException(status_code=404, detail="Anonymous session not found")
+    rooms = database.list_rooms(session_id)
     for room in rooms:
         room.online_count = manager.online_count(room.id)
     return rooms
@@ -129,9 +159,17 @@ async def room_socket(websocket: WebSocket, room_id: str, session_id: str) -> No
 
     display_name = session["display_name"]
     await manager.connect(room_id, websocket)
+    current_room = database.get_room(room_id, session_id)
+    participant_count = current_room.participant_count if current_room else 0
     await manager.broadcast(
         room_id,
-        {"type": "presence", "event": "join", "display_name": display_name, "online_count": manager.online_count(room_id)},
+        {
+            "type": "presence",
+            "event": "join",
+            "display_name": display_name,
+            "online_count": manager.online_count(room_id),
+            "participant_count": participant_count,
+        },
     )
     try:
         while True:
@@ -152,5 +190,11 @@ async def room_socket(websocket: WebSocket, room_id: str, session_id: str) -> No
         manager.disconnect(room_id, websocket)
         await manager.broadcast(
             room_id,
-            {"type": "presence", "event": "leave", "display_name": display_name, "online_count": manager.online_count(room_id)},
+            {
+                "type": "presence",
+                "event": "leave",
+                "display_name": display_name,
+                "online_count": manager.online_count(room_id),
+                "participant_count": participant_count,
+            },
         )

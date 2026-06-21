@@ -54,6 +54,7 @@ class EmotionAnalysis(BaseModel):
     summary_label: str = Field(min_length=1, max_length=24)
     safety_risk: SafetyRisk = SafetyRisk.none
     empathy_prompt: str = Field(min_length=1, max_length=160)
+    status_message: str = Field(min_length=1, max_length=180)
 
 
 class RoomOut(BaseModel):
@@ -63,6 +64,8 @@ class RoomOut(BaseModel):
     name: str
     description: str
     online_count: int = 0
+    participant_count: int = 0
+    joined_by_me: bool = False
 
 
 class AnalyzeResponse(BaseModel):
@@ -76,6 +79,11 @@ class AnalyzeResponse(BaseModel):
 class JoinRoomRequest(BaseModel):
     session_id: str
     analysis_id: str
+
+
+class RejoinRoomRequest(BaseModel):
+    session_id: str
+    room_id: str
 
 
 class MessageOut(BaseModel):
@@ -103,4 +111,3 @@ class ReportRequest(BaseModel):
 class ReportResponse(BaseModel):
     report_id: str
     status: str
-

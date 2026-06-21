@@ -68,6 +68,7 @@ def init_db() -> None:
                 summary_label TEXT NOT NULL,
                 safety_risk TEXT NOT NULL,
                 empathy_prompt TEXT NOT NULL,
+                status_message TEXT NOT NULL DEFAULT '',
                 room_id TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY(session_id) REFERENCES anonymous_users(session_id),
@@ -86,6 +87,15 @@ def init_db() -> None:
                 FOREIGN KEY(session_id) REFERENCES anonymous_users(session_id)
             );
 
+            CREATE TABLE IF NOT EXISTS room_memberships (
+                session_id TEXT NOT NULL,
+                room_id TEXT NOT NULL,
+                joined_at TEXT NOT NULL,
+                PRIMARY KEY(session_id, room_id),
+                FOREIGN KEY(session_id) REFERENCES anonymous_users(session_id),
+                FOREIGN KEY(room_id) REFERENCES rooms(id)
+            );
+
             CREATE TABLE IF NOT EXISTS message_reports (
                 id TEXT PRIMARY KEY,
                 message_id TEXT NOT NULL,
@@ -97,6 +107,13 @@ def init_db() -> None:
             );
             """
         )
+        if not has_column(conn, "emotion_analyses", "status_message"):
+            conn.execute("ALTER TABLE emotion_analyses ADD COLUMN status_message TEXT NOT NULL DEFAULT ''")
+
+
+def has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
 
 
 def make_display_name() -> str:
@@ -141,19 +158,77 @@ def ensure_room(room: RoomOut) -> RoomOut:
     return room
 
 
-def get_room(room_id: str) -> Optional[RoomOut]:
+def add_room_membership(session_id: str, room_id: str) -> None:
     with connection() as conn:
-        row = conn.execute("SELECT * FROM rooms WHERE id = ?", (room_id,)).fetchone()
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO room_memberships (session_id, room_id, joined_at)
+            VALUES (?, ?, ?)
+            """,
+            (session_id, room_id, now_iso()),
+        )
+
+
+def is_room_member(session_id: str, room_id: str) -> bool:
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM room_memberships
+            WHERE session_id = ? AND room_id = ?
+            """,
+            (session_id, room_id),
+        ).fetchone()
+    return row is not None
+
+
+def get_room(room_id: str, session_id: Optional[str] = None) -> Optional[RoomOut]:
+    with connection() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                rooms.*,
+                (
+                    SELECT COUNT(*) FROM room_memberships
+                    WHERE room_memberships.room_id = rooms.id
+                ) AS participant_count,
+                (
+                    SELECT COUNT(*) FROM room_memberships
+                    WHERE room_memberships.room_id = rooms.id
+                    AND room_memberships.session_id = ?
+                ) AS joined_count
+            FROM rooms
+            WHERE rooms.id = ?
+            """,
+            (session_id or "", room_id),
+        ).fetchone()
     return room_from_row(row) if row else None
 
 
-def list_rooms() -> list[RoomOut]:
+def list_rooms(session_id: Optional[str] = None) -> list[RoomOut]:
     with connection() as conn:
-        rows = conn.execute("SELECT * FROM rooms ORDER BY created_at DESC").fetchall()
+        rows = conn.execute(
+            """
+            SELECT
+                rooms.*,
+                (
+                    SELECT COUNT(*) FROM room_memberships
+                    WHERE room_memberships.room_id = rooms.id
+                ) AS participant_count,
+                (
+                    SELECT COUNT(*) FROM room_memberships
+                    WHERE room_memberships.room_id = rooms.id
+                    AND room_memberships.session_id = ?
+                ) AS joined_count
+            FROM rooms
+            ORDER BY created_at DESC
+            """,
+            (session_id or "",),
+        ).fetchall()
     return [room_from_row(row) for row in rows]
 
 
 def room_from_row(row: sqlite3.Row) -> RoomOut:
+    keys = row.keys()
     return RoomOut(
         id=row["id"],
         primary_emotion=row["primary_emotion"],
@@ -161,6 +236,8 @@ def room_from_row(row: sqlite3.Row) -> RoomOut:
         name=row["name"],
         description=row["description"],
         online_count=0,
+        participant_count=int(row["participant_count"]) if "participant_count" in keys else 0,
+        joined_by_me=bool(row["joined_count"]) if "joined_count" in keys else False,
     )
 
 
@@ -171,10 +248,10 @@ def save_analysis(session_id: str, original_text: str, analysis: EmotionAnalysis
             """
             INSERT INTO emotion_analyses (
                 id, session_id, original_text, primary_emotion, secondary_emotions, intensity,
-                valence, arousal, share_intent, summary_label, safety_risk, empathy_prompt,
+                valence, arousal, share_intent, summary_label, safety_risk, empathy_prompt, status_message,
                 room_id, created_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 analysis_id,
@@ -189,6 +266,7 @@ def save_analysis(session_id: str, original_text: str, analysis: EmotionAnalysis
                 analysis.summary_label,
                 analysis.safety_risk.value,
                 analysis.empathy_prompt,
+                analysis.status_message,
                 room_id,
                 now_iso(),
             ),
@@ -203,6 +281,8 @@ def get_analysis(analysis_id: str) -> Optional[dict[str, Any]]:
         return None
     data = dict(row)
     data["secondary_emotions"] = json.loads(data["secondary_emotions"])
+    if not data.get("status_message"):
+        data["status_message"] = data["original_text"]
     return data
 
 
@@ -267,4 +347,3 @@ def reset_db_for_tests(path: str) -> None:
     if Path(path).exists():
         Path(path).unlink()
     init_db()
-

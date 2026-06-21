@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Check,
   HeartHandshake,
   Loader2,
   MessageCircle,
@@ -49,6 +50,8 @@ export default function Home() {
   const [loading, setLoading] = useState<"session" | "analysis" | "join" | null>("session");
   const [error, setError] = useState("");
   const [presence, setPresence] = useState("");
+  const [socketReady, setSocketReady] = useState(false);
+  const [statusShareChoice, setStatusShareChoice] = useState<"pending" | "sent" | "dismissed">("pending");
   const socketRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -94,6 +97,7 @@ export default function Home() {
     setError("");
     setAnalysis(null);
     setChat(null);
+    setStatusShareChoice("pending");
     closeSocket();
     setLoading("analysis");
     try {
@@ -114,6 +118,7 @@ export default function Home() {
       const joined = await joinRoom(session.session_id, analysis.analysis_id);
       setChat(joined);
       setMessages(joined.messages);
+      setStatusShareChoice("pending");
       connectSocket(joined.ws_url);
     } catch (err) {
       setError(err instanceof Error ? err.message : "进入房间失败。");
@@ -126,6 +131,7 @@ export default function Home() {
     closeSocket();
     const socket = new WebSocket(url);
     socketRef.current = socket;
+    socket.onopen = () => setSocketReady(true);
     socket.onmessage = (event) => {
       const payload = JSON.parse(event.data) as
         | { type: "message"; message: Message }
@@ -149,12 +155,17 @@ export default function Home() {
       }
       setError(payload.message);
     };
-    socket.onerror = () => setError("聊天室连接暂时不稳定。");
+    socket.onerror = () => {
+      setSocketReady(false);
+      setError("聊天室连接暂时不稳定。");
+    };
+    socket.onclose = () => setSocketReady(false);
   }
 
   function closeSocket() {
     socketRef.current?.close();
     socketRef.current = null;
+    setSocketReady(false);
   }
 
   function sendMessage(event: FormEvent) {
@@ -165,6 +176,12 @@ export default function Home() {
     setDraft("");
   }
 
+  function sendCurrentStatus() {
+    if (!analysis || socketRef.current?.readyState !== WebSocket.OPEN) return;
+    socketRef.current.send(JSON.stringify({ content: buildStatusMessage(text, analysis.analysis) }));
+    setStatusShareChoice("sent");
+  }
+
   function resetFlow() {
     setAnalysis(null);
     setChat(null);
@@ -172,6 +189,7 @@ export default function Home() {
     setMessages([]);
     setPresence("");
     setError("");
+    setStatusShareChoice("pending");
     closeSocket();
   }
 
@@ -274,6 +292,17 @@ export default function Home() {
               <div className="scroll-soft flex-1 overflow-y-auto px-5 py-5">
                 <div className="mx-auto flex max-w-3xl flex-col gap-3">
                   {presence ? <div className="self-center rounded-[8px] bg-mist px-3 py-1.5 text-xs text-ink/55">{presence}</div> : null}
+                  {analysis && statusShareChoice === "pending" ? (
+                    <CurrentStatusPanel
+                      message={buildStatusMessage(text, analysis.analysis)}
+                      disabled={!socketReady}
+                      onSend={sendCurrentStatus}
+                      onDismiss={() => setStatusShareChoice("dismissed")}
+                    />
+                  ) : null}
+                  {analysis && statusShareChoice === "sent" ? (
+                    <div className="self-center rounded-[8px] bg-mist px-3 py-1.5 text-xs text-ink/55">当前状态已发送</div>
+                  ) : null}
                   {messages.length === 0 ? (
                     <div className="rounded-[8px] border border-dashed border-ink/16 bg-white/60 p-5 text-center text-sm text-ink/55">
                       房间已经准备好。你可以先说一句，也可以安静地等别人开口。
@@ -350,6 +379,49 @@ export default function Home() {
         </aside>
       </div>
     </main>
+  );
+}
+
+function CurrentStatusPanel({
+  message,
+  disabled,
+  onSend,
+  onDismiss
+}: {
+  message: string;
+  disabled: boolean;
+  onSend: () => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <div className="rounded-[8px] border border-tide/18 bg-mist p-4">
+      <div className="flex items-center gap-2 text-sm font-medium text-tide">
+        <Sparkles size={16} />
+        当前状态
+      </div>
+      <p className="mt-3 whitespace-pre-wrap break-words rounded-[8px] border border-white bg-white/72 p-3 text-sm leading-6 text-ink/68">
+        {message}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={onSend}
+          disabled={disabled}
+          className="inline-flex min-h-10 items-center gap-2 rounded-[8px] bg-ink px-4 py-2 text-sm font-medium text-white transition hover:bg-tide disabled:cursor-not-allowed disabled:bg-ink/35"
+        >
+          <Send size={16} />
+          发送当前状态
+        </button>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="inline-flex min-h-10 items-center gap-2 rounded-[8px] border border-ink/10 bg-white px-4 py-2 text-sm text-ink/65 transition hover:border-tide/40 hover:text-ink"
+        >
+          <Check size={16} />
+          暂时不发
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -462,3 +534,9 @@ function intentName(intent: string) {
   );
 }
 
+function buildStatusMessage(text: string, analysis: AnalyzeResponse["analysis"]) {
+  const original = text.trim().replace(/\s+/g, " ");
+  const excerpt = original.length > 110 ? `${original.slice(0, 110)}...` : original;
+  const secondary = analysis.secondary_emotions.length ? `，还夹着${analysis.secondary_emotions.join("、")}` : "";
+  return `我现在的状态：${analysis.summary_label}。AI 识别为${emotionNames[analysis.primary_emotion]}${secondary}，强度 ${analysis.intensity}/5，${intentName(analysis.share_intent)}。我想说的是：“${excerpt}”`;
+}

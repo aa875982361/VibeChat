@@ -10,6 +10,8 @@ from fastapi.testclient import TestClient
 from app import database
 from app import emotions
 from app.main import app
+from app.rooms import intensity_bucket, match_signature
+from app.schemas import EmotionAnalysis, PrimaryEmotion, SafetyRisk, ShareIntent
 
 
 def setup_function() -> None:
@@ -28,6 +30,33 @@ def analyze_for_text(client: TestClient, text: str) -> dict:
     )
     assert response.status_code == 200
     return response.json()
+
+
+def make_analysis(
+    *,
+    primary_emotion: PrimaryEmotion,
+    secondary_emotions: list[str],
+    intensity: int,
+    valence: float,
+    arousal: float,
+    share_intent: ShareIntent,
+) -> EmotionAnalysis:
+    return EmotionAnalysis(
+        primary_emotion=primary_emotion,
+        secondary_emotions=secondary_emotions,
+        intensity=intensity,
+        valence=valence,
+        arousal=arousal,
+        share_intent=share_intent,
+        summary_label="测试情绪",
+        safety_risk=SafetyRisk.none,
+        empathy_prompt="先把此刻的感受放在这里。",
+        status_message="我想找一个同频的地方说说现在的状态。",
+    )
+
+
+def old_room_signature(analysis: EmotionAnalysis) -> str:
+    return f"{analysis.primary_emotion.value}-{intensity_bucket(analysis.intensity)}"
 
 
 def test_create_session_and_analyze_joy_room() -> None:
@@ -172,6 +201,170 @@ def test_user_input_scenarios_map_to_reasonable_rooms(
         assert expected_secondary in analysis["secondary_emotions"]
 
 
+@pytest.mark.parametrize(
+    ("text", "expected_room_id"),
+    [
+        ("明天要面试，紧张得睡不着，脑子一直停不下来", "anxiety-high-vent-negative-activated-general"),
+        ("连续加班好几天，压力太大了，真的累到不想说话", "stress-high-vent-negative-activated-fatigue"),
+        ("一个人在外地生病，没人懂，也没人听我说话", "loneliness-medium-comfort-negative-calm-general"),
+        ("朋友帮我解决了大麻烦，真的很感谢，也觉得自己很幸运", "gratitude-high-share-positive-calm-general"),
+        ("昨天会上说错话，觉得特别丢脸，很后悔也有点自责", "shame-high-reflect-negative-steady-general"),
+        ("我不知道该不该离职，脑子很混乱，纠结到搞不清方向", "confusion-medium-reflect-negative-steady-general"),
+        ("被同事甩锅真的很生气，觉得太不公平了", "anger-high-vent-negative-activated-grievance"),
+        ("今天升职了真的太开心了！！", "joy-high-share-positive-steady-general"),
+        ("项目终于上线了，太好了，开心到想找人分享！！", "joy-high-share-positive-steady-general"),
+        ("今天挺开心", "joy-medium-share-positive-steady-general"),
+    ],
+)
+def test_simulated_user_input_matching_accuracy(text: str, expected_room_id: str) -> None:
+    client = TestClient(app)
+
+    data = analyze_for_text(client, text)
+
+    assert data["recommended_room"]["id"] == expected_room_id
+
+
+def test_matching_signature_uses_intent_valence_arousal_and_secondary_emotions() -> None:
+    base = make_analysis(
+        primary_emotion=PrimaryEmotion.anxiety,
+        secondary_emotions=["担心"],
+        intensity=4,
+        valence=-0.6,
+        arousal=0.8,
+        share_intent=ShareIntent.vent,
+    )
+    different_intent = base.model_copy(update={"share_intent": ShareIntent.listen})
+    different_valence = base.model_copy(update={"valence": 0.0})
+    different_arousal = base.model_copy(update={"arousal": 0.35})
+    different_secondary = base.model_copy(update={"secondary_emotions": ["委屈"]})
+
+    signatures = {
+        match_signature(base),
+        match_signature(different_intent),
+        match_signature(different_valence),
+        match_signature(different_arousal),
+        match_signature(different_secondary),
+    }
+
+    assert len(signatures) == 5
+    assert match_signature(base) == "anxiety-high-vent-negative-activated-fear"
+    assert old_room_signature(base) == old_room_signature(different_intent)
+    assert old_room_signature(base) == old_room_signature(different_valence)
+    assert old_room_signature(base) == old_room_signature(different_arousal)
+    assert old_room_signature(base) == old_room_signature(different_secondary)
+
+
+def test_pairwise_matching_accuracy_improves_over_primary_emotion_only_rooms() -> None:
+    cases = [
+        (
+            "anxiety-vent-fear",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["担心"],
+                intensity=4,
+                valence=-0.6,
+                arousal=0.8,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anxiety-vent-fear",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["害怕"],
+                intensity=4,
+                valence=-0.58,
+                arousal=0.78,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anxiety-listen-fear",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["担心"],
+                intensity=4,
+                valence=-0.6,
+                arousal=0.8,
+                share_intent=ShareIntent.listen,
+            ),
+        ),
+        (
+            "anxiety-vent-calm-fear",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["担心"],
+                intensity=4,
+                valence=-0.6,
+                arousal=0.35,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anxiety-vent-mixed-fear",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["担心"],
+                intensity=4,
+                valence=0.0,
+                arousal=0.8,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anxiety-vent-grievance",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anxiety,
+                secondary_emotions=["委屈"],
+                intensity=4,
+                valence=-0.6,
+                arousal=0.8,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anger-vent-grievance",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anger,
+                secondary_emotions=["委屈"],
+                intensity=4,
+                valence=-0.54,
+                arousal=0.82,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+        (
+            "anger-vent-grievance",
+            make_analysis(
+                primary_emotion=PrimaryEmotion.anger,
+                secondary_emotions=["不公平"],
+                intensity=4,
+                valence=-0.5,
+                arousal=0.8,
+                share_intent=ShareIntent.vent,
+            ),
+        ),
+    ]
+
+    total_pairs = 0
+    old_correct = 0
+    new_correct = 0
+    for index, (expected_group, analysis) in enumerate(cases):
+        for other_expected_group, other_analysis in cases[index + 1 :]:
+            should_match = expected_group == other_expected_group
+            old_matches = old_room_signature(analysis) == old_room_signature(other_analysis)
+            new_matches = match_signature(analysis) == match_signature(other_analysis)
+            total_pairs += 1
+            old_correct += old_matches == should_match
+            new_correct += new_matches == should_match
+
+    old_accuracy = old_correct / total_pairs
+    new_accuracy = new_correct / total_pairs
+
+    assert old_accuracy == pytest.approx(0.5)
+    assert new_accuracy == pytest.approx(1.0)
+
+
 def test_similar_users_match_the_same_emotion_intensity_room() -> None:
     client = TestClient(app)
     first = analyze_for_text(client, "今天升职了真的太开心了！！")
@@ -180,7 +373,7 @@ def test_similar_users_match_the_same_emotion_intensity_room() -> None:
     assert first["analysis"]["primary_emotion"] == "joy"
     assert second["analysis"]["primary_emotion"] == "joy"
     assert first["recommended_room"]["id"] == second["recommended_room"]["id"]
-    assert first["recommended_room"]["id"] == "joy-high"
+    assert first["recommended_room"]["id"] == "joy-high-share-positive-steady-general"
 
 
 def test_different_intensity_creates_a_separate_room_within_same_emotion() -> None:
@@ -189,8 +382,8 @@ def test_different_intensity_creates_a_separate_room_within_same_emotion() -> No
     intense = analyze_for_text(client, "今天升职了真的太开心了！！")
 
     assert calm["analysis"]["primary_emotion"] == intense["analysis"]["primary_emotion"] == "joy"
-    assert calm["recommended_room"]["id"] == "joy-medium"
-    assert intense["recommended_room"]["id"] == "joy-high"
+    assert calm["recommended_room"]["id"] == "joy-medium-share-positive-steady-general"
+    assert intense["recommended_room"]["id"] == "joy-high-share-positive-steady-general"
     assert calm["recommended_room"]["id"] != intense["recommended_room"]["id"]
 
 

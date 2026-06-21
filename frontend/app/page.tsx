@@ -180,7 +180,7 @@ export default function Home() {
 
   function connectSocket(url: string) {
     closeSocket();
-    const socket = new WebSocket(url);
+    const socket = new WebSocket(resolveWebSocketUrl(url));
     socketRef.current = socket;
     socket.onopen = () => setSocketReady(true);
     socket.onmessage = (event) => {
@@ -221,6 +221,14 @@ export default function Home() {
       setError("聊天室连接暂时不稳定。");
     };
     socket.onclose = () => setSocketReady(false);
+  }
+
+  function resolveWebSocketUrl(url: string) {
+    const socketUrl = new URL(url, window.location.href);
+    if (window.location.protocol === "https:" && socketUrl.protocol === "ws:") {
+      socketUrl.protocol = "wss:";
+    }
+    return socketUrl.toString();
   }
 
   function closeSocket() {

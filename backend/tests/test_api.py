@@ -92,6 +92,24 @@ def test_join_room_and_websocket_message_broadcast() -> None:
         assert event["message"]["content"] == "我也想把这份开心说出来"
 
 
+def test_join_room_ws_url_respects_forwarded_https_headers() -> None:
+    client = TestClient(app)
+    session = client.post("/api/sessions").json()
+    analyzed = client.post(
+        "/api/emotions/analyze",
+        json={"session_id": session["session_id"], "text": "今天升职了真的很开心"},
+    ).json()
+
+    joined = client.post(
+        "/api/rooms/join",
+        json={"session_id": session["session_id"], "analysis_id": analyzed["analysis_id"]},
+        headers={"x-forwarded-proto": "https", "x-forwarded-host": "vibechat.nisonfuture.cn"},
+    )
+
+    assert joined.status_code == 200
+    assert joined.json()["ws_url"].startswith("wss://vibechat.nisonfuture.cn/ws/rooms/")
+
+
 def test_rooms_are_rejoinable_only_after_matching_join() -> None:
     client = TestClient(app)
     first_session = client.post("/api/sessions").json()

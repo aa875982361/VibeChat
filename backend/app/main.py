@@ -121,13 +121,27 @@ def rejoin_room(payload: RejoinRoomRequest, request: Request) -> JoinRoomRespons
 
 def room_response(room: RoomOut, session_id: str, request: Request) -> JoinRoomResponse:
     room.online_count = manager.online_count(room.id)
-    scheme = "wss" if request.url.scheme == "https" else "ws"
-    ws_url = f"{scheme}://{request.url.netloc}/ws/rooms/{room.id}?session_id={session_id}"
+    scheme = websocket_scheme(request)
+    host = forwarded_header(request, "x-forwarded-host") or request.url.netloc
+    ws_url = f"{scheme}://{host}/ws/rooms/{room.id}?session_id={session_id}"
     return JoinRoomResponse(
         room=room,
         messages=[MessageOut(**message) for message in database.list_messages(room.id)],
         ws_url=ws_url,
     )
+
+
+def forwarded_header(request: Request, name: str) -> Optional[str]:
+    value = request.headers.get(name)
+    if not value:
+        return None
+    return value.split(",", 1)[0].strip() or None
+
+
+def websocket_scheme(request: Request) -> str:
+    forwarded_proto = forwarded_header(request, "x-forwarded-proto")
+    scheme = forwarded_proto or request.url.scheme
+    return "wss" if scheme in {"https", "wss"} else "ws"
 
 
 @app.get("/api/rooms", response_model=list[RoomOut])

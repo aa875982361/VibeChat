@@ -3,10 +3,16 @@
 node_modules/
 frontend/node_modules/
 frontend/.next/
+frontend/out/
+frontend/.turbo/
 backend/.venv/
 backend/.pytest_cache/
+backend/htmlcov/
+.ruff_cache/
+.mypy_cache/
 __pycache__/
 *.pyc
+*.pyo
+*.log
 *.db
 .DS_Store
-

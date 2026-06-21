@@ -49,6 +49,20 @@ Then start both services:
 docker compose up --build
 ```
 
+On Tencent Cloud, keep BuildKit enabled so Docker can reuse dependency caches:
+
+```bash
+DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose build
+docker compose up -d
+```
+
+The Docker build defaults to Tencent Cloud's PyPI mirror and npmmirror for npm.
+Override them when needed:
+
+```bash
+PIP_INDEX_URL=https://pypi.org/simple NPM_CONFIG_REGISTRY=https://registry.npmjs.org docker compose build
+```
+
 Open http://localhost:3000. The backend is exposed at http://localhost:8058, and SQLite data is stored in the `vibechat-data` Docker volume.
 
 ## Environment

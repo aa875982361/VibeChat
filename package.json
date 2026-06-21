@@ -1,0 +1,14 @@
+{
+  "name": "vibechat",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm --prefix frontend run dev\" \"cd backend && uvicorn app.main:app --reload --port 8058\"",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "cd backend && uvicorn app.main:app --reload --port 8058",
+    "test:backend": "cd backend && pytest",
+    "test:frontend": "npm --prefix frontend run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

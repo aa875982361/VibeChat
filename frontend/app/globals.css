@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-sans: "Inter", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  color: #1f2933;
+  background: #f4f0ea;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background:
+    linear-gradient(135deg, rgba(238, 243, 241, 0.95), rgba(246, 241, 234, 0.96)),
+    radial-gradient(circle at top left, rgba(96, 116, 102, 0.14), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(217, 164, 65, 0.13), transparent 30%);
+}
+
+button,
+textarea,
+input {
+  font: inherit;
+}
+
+textarea::placeholder,
+input::placeholder {
+  color: rgba(31, 41, 51, 0.45);
+}
+
+.scroll-soft {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(79, 111, 122, 0.35) transparent;
+}
+
+.scroll-soft::-webkit-scrollbar {
+  width: 8px;
+}
+
+.scroll-soft::-webkit-scrollbar-thumb {
+  background: rgba(79, 111, 122, 0.35);
+  border-radius: 999px;
+}
+
